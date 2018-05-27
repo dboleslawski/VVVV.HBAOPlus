@@ -8,6 +8,8 @@
 * license agreement from NVIDIA CORPORATION is strictly prohibited. 
 */
 
+// modified for C++/CLI usage with managed DLL imports
+
 /*====================================================================================================
 -------------------------------------------------------------------------------------------
                                            HBAO+                                           
@@ -155,10 +157,18 @@ BLUR_RADIUS_4, and FP16_VIEW_DEPTHS, the RenderAO call takes:
 #define GFSDK_SSAO_DECL(RETURN_TYPE, FUNCTION_NAME, ...) extern "C" RETURN_TYPE GFSDK_SSAO_CDECL FUNCTION_NAME(__VA_ARGS__)
 #else
 #define GFSDK_SSAO_DECL(RETURN_TYPE, FUNCTION_NAME, ...) extern "C" GFSDK_SSAO_EXPORT RETURN_TYPE GFSDK_SSAO_CDECL FUNCTION_NAME(__VA_ARGS__)
+
+#if defined(_WIN64)
+#define MANAGEDDLLIMPORT [DllImport("GFSDK_SSAO_D3D11.win64.dll")]
+#else
+#define MANAGEDDLLIMPORT [DllImport("GFSDK_SSAO_D3D11.win32.dll")]
+#endif
 #endif
 
 #define GFSDK_SSAO_VERSION_ARGUMENT GFSDK_SSAO_Version HeaderVersion = GFSDK_SSAO_Version()
 #define GFSDK_SSAO_CUSTOM_HEAP_ARGUMENT const GFSDK_SSAO_CustomHeap* pCustomHeap = NULL
+#define GFSDK_SSAO_VERSION GFSDK_SSAO_Version()
+#define GFSDK_SSAO_CUSTOM_HEAP NULL
 
 #endif
 
@@ -1027,5 +1037,33 @@ GFSDK_SSAO_DECL(GFSDK_SSAO_Status, GFSDK_SSAO_CreateContext_D3D12,
     GFSDK_SSAO_Context_D3D12** ppContext,
     GFSDK_SSAO_CUSTOM_HEAP_ARGUMENT,
     GFSDK_SSAO_VERSION_ARGUMENT);
+
+using namespace System;
+using namespace System::Runtime::InteropServices;
+
+namespace VVVV
+{
+	namespace HBAOPlus
+	{
+		namespace Bridge
+		{
+			public ref class ManagedDLLImport
+			{
+			public:
+
+				MANAGEDDLLIMPORT
+				static GFSDK_SSAO_Status GFSDK_SSAO_GetVersion(GFSDK_SSAO_Version* pVersion);
+
+				MANAGEDDLLIMPORT
+				static GFSDK_SSAO_Status GFSDK_SSAO_CreateContext_D3D11(
+					ID3D11Device* pD3DDevice,
+					GFSDK_SSAO_Context_D3D11** ppContext,
+					const GFSDK_SSAO_CustomHeap* pCustomHeap,
+					GFSDK_SSAO_Version HeaderVersion
+				);
+			};
+		}
+	}
+}
 
 #pragma pack(pop)

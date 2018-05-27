@@ -3,74 +3,101 @@
 #include "GFSDK_SSAO.h"
 #include "assert.h"
 
-void InitHBAO(void* device)
-{
-	customHeap.new_ = ::operator new;
-	customHeap.delete_ = ::operator delete;
+using namespace VVVV::HBAOPlus::Bridge;
 
-	status = GFSDK_SSAO_CreateContext_D3D11((ID3D11Device*)device, &aoContext, &customHeap);
-	assert(status == GFSDK_SSAO_OK); // HBAO+ requires feature level 11_0 or above
+GfsdkHbaoContext::GfsdkHbaoContext(SlimDX::Direct3D11::Device^ device)
+{
+	Unmanaged = new GfsdkHbaoUnmanagedData();
+	Unmanaged->customHeap.new_ = ::operator new;
+	Unmanaged->customHeap.delete_ = ::operator delete;
+	Device = device;
+	Unmanaged->device = (ID3D11Device*)(void*)Device->ComPointer;
+
+	Unmanaged->status = ManagedDLLImport::GFSDK_SSAO_CreateContext_D3D11(Unmanaged->device, &(Unmanaged->aoContext), &(Unmanaged->customHeap), GFSDK_SSAO_VERSION);
+
+	//void* context = (void*)(Unmanaged->aoContext);
+
+	assert(Unmanaged->status == GFSDK_SSAO_OK); // HBAO+ requires feature level 11_0 or above
 }
 
-void SetDepthParameters(void* depthSRV, float* proj, float sceneScale)
+GfsdkHbaoContext::~GfsdkHbaoContext()
 {
-	input.DepthData.DepthTextureType = GFSDK_SSAO_HARDWARE_DEPTHS;
-	input.DepthData.pFullResDepthTextureSRV = (ID3D11ShaderResourceView*)depthSRV;
-	// input.DepthData.pFullResDepthTexture2ndLayerSRV = pDepthStencilTexture2ndLayerSRV; // required only if Params.DualLayerAO=true
-	input.DepthData.ProjectionMatrix.Data = GFSDK_SSAO_Float4x4(proj);
-	input.DepthData.ProjectionMatrix.Layout = GFSDK_SSAO_ROW_MAJOR_ORDER;
-	input.DepthData.MetersToViewSpaceUnits = sceneScale;
-	input.NormalData.Enable = false; // TODO: implement this sometime
+	Unmanaged->aoContext->Release();
+	delete RenderTarget;
+	delete Unmanaged;
 }
 
-void SetAoParameters(float radius, float bias, float powerExp, float smallScaleAo, float largeScaleAo, GFSDK_SSAO_StepCount stepCount,
-	bool foregroundAo, float foregroundViewDepth, bool backgroundAo, float backgroundViewDepth,
-	GFSDK_SSAO_DepthStorage depthStorage, GFSDK_SSAO_DepthClampMode depthClampMode,
-	bool depthThreshold, float depthThresholdMaxViewDepth, float depthThresholdSharpness,
-	bool blur, GFSDK_SSAO_BlurRadius blurRadius, float blurSharpness,
-	bool blurSharpnessProfile, float blurSharpnessProfileForegroundScale, float blurSharpnessProfileForegroundViewDepth, float blurSharpnessProfileBackgroundViewDepth)
+void GfsdkHbaoContext::SetDepthSrv()
 {
-	params.Radius = radius;
-	params.Bias = bias;
-	params.PowerExponent = powerExp;
-	params.SmallScaleAO = smallScaleAo;
-	params.LargeScaleAO = largeScaleAo;
-	params.StepCount = stepCount;
-
-	params.ForegroundAO.Enable = foregroundAo;
-	params.ForegroundAO.ForegroundViewDepth = foregroundViewDepth;
-	params.BackgroundAO.Enable = backgroundAo;
-	params.BackgroundAO.BackgroundViewDepth = backgroundViewDepth;
-
-	params.DepthStorage = depthStorage;
-	params.DepthClampMode = depthClampMode;
-
-	params.DepthThreshold.Enable = depthThreshold;
-	params.DepthThreshold.MaxViewDepth = depthThresholdMaxViewDepth;
-	params.DepthThreshold.Sharpness = depthThresholdSharpness;
-
-	params.Blur.Enable = blur;
-	params.Blur.Radius = blurRadius;
-	params.Blur.Sharpness = blurSharpness;
-
-	params.Blur.SharpnessProfile.Enable = blurSharpnessProfile;
-	params.Blur.SharpnessProfile.ForegroundSharpnessScale = blurSharpnessProfileForegroundScale;
-	params.Blur.SharpnessProfile.ForegroundViewDepth = blurSharpnessProfileForegroundViewDepth;
-	params.Blur.SharpnessProfile.BackgroundViewDepth = blurSharpnessProfileBackgroundViewDepth;
+	Unmanaged->input.DepthData.DepthTextureType = GFSDK_SSAO_HARDWARE_DEPTHS;
+	Unmanaged->input.DepthData.pFullResDepthTextureSRV = (ID3D11ShaderResourceView*)(void*)DepthSrv->ComPointer;
 }
 
-void RenderHBAO(ID3D11DeviceContext* context, ID3D11RenderTargetView* rtv)
+void GfsdkHbaoContext::SetDepthParameters()
 {
-	output.pRenderTargetView = rtv;
-	status = aoContext->RenderAO(context, input, params, output, renderMask);
+	GCHandle handle = GCHandle::Alloc(Projection, GCHandleType::Pinned);
+	try
+	{
+		float* proj = (float*)(void*)handle.AddrOfPinnedObject();
+		// input.DepthData.pFullResDepthTexture2ndLayerSRV = pDepthStencilTexture2ndLayerSRV; // required only if Params.DualLayerAO=true
+		Unmanaged->input.DepthData.ProjectionMatrix.Data = GFSDK_SSAO_Float4x4(proj);
+		Unmanaged->input.DepthData.ProjectionMatrix.Layout = GFSDK_SSAO_ROW_MAJOR_ORDER;
+		Unmanaged->input.DepthData.MetersToViewSpaceUnits = SceneScale;
+		// TODO: implement this sometime
+		Unmanaged->input.NormalData.Enable = false;
+	}
+	finally
+	{
+		handle.Free();
+	}
 }
 
-void SetRenderMask(GFSDK_SSAO_RenderMask mask)
+void GfsdkHbaoContext::SetAoParameters()
 {
-	renderMask = mask;
+	Unmanaged->params.Radius = Radius;
+	Unmanaged->params.Bias = Bias;
+	Unmanaged->params.PowerExponent = PowerExp;
+	Unmanaged->params.SmallScaleAO = SmallScaleAo;
+	Unmanaged->params.LargeScaleAO = LargeScaleAo;
+	Unmanaged->params.StepCount = (GFSDK_SSAO_StepCount)((unsigned int)StepCount);
+
+	Unmanaged->params.ForegroundAO.Enable = ForegroundAo;
+	Unmanaged->params.ForegroundAO.ForegroundViewDepth = ForegroundViewDepth;
+	Unmanaged->params.BackgroundAO.Enable = BackgroundAo;
+	Unmanaged->params.BackgroundAO.BackgroundViewDepth = BackgroundViewDepth;
+
+	Unmanaged->params.DepthStorage = (GFSDK_SSAO_DepthStorage)((unsigned int)DepthStorage);
+	Unmanaged->params.DepthClampMode = (GFSDK_SSAO_DepthClampMode)((unsigned int)DepthClampMode);
+
+	Unmanaged->params.DepthThreshold.Enable = DepthThreshold;
+	Unmanaged->params.DepthThreshold.MaxViewDepth = DepthThresholdMaxViewDepth;
+	Unmanaged->params.DepthThreshold.Sharpness = DepthThresholdSharpness;
+
+	Unmanaged->params.Blur.Enable = Blur;
+	Unmanaged->params.Blur.Radius = (GFSDK_SSAO_BlurRadius)((unsigned int)BlurRadius);
+	Unmanaged->params.Blur.Sharpness = BlurSharpness;
+
+	Unmanaged->params.Blur.SharpnessProfile.Enable = BlurSharpnessProfile;
+	Unmanaged->params.Blur.SharpnessProfile.ForegroundSharpnessScale = BlurSharpnessProfileForegroundScale;
+	Unmanaged->params.Blur.SharpnessProfile.ForegroundViewDepth = BlurSharpnessProfileForegroundViewDepth;
+	Unmanaged->params.Blur.SharpnessProfile.BackgroundViewDepth = BlurSharpnessProfileBackgroundViewDepth;
 }
 
-GFSDK_SSAO_Status PollStatus()
+void GfsdkHbaoContext::Render()
 {
-	return status;
+
+	Unmanaged->output.pRenderTargetView = (ID3D11RenderTargetView*)(void*)(RenderTarget->ComPointer);
+	ID3D11DeviceContext* context = (ID3D11DeviceContext*)(void*)(DeviceContext->ComPointer);
+	//GFSDK_SSAO_Output_D3D11* outstruct = &(Unmanaged->output);
+	Unmanaged->status = Unmanaged->aoContext->RenderAO(context, Unmanaged->input, Unmanaged->params, Unmanaged->output, Unmanaged->renderMask);
+}
+
+void GfsdkHbaoContext::SetRenderMask(GfsdkHbaoRenderMask mask)
+{
+	Unmanaged->renderMask = (GFSDK_SSAO_RenderMask)((unsigned int)mask);
+}
+
+GfsdkHbaoStatus GfsdkHbaoContext::PollStatus()
+{
+	return (GfsdkHbaoStatus)((unsigned int)(Unmanaged->status));
 }
