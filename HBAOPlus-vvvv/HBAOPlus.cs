@@ -106,9 +106,20 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
         [Input("Blur Sharpness Profile Background View Depth", DefaultValue = 1f, Visibility = PinVisibility.OnlyInspector)]
         protected IDiffSpread<float> FBlurSharpnessProfileBackgroundViewDepthIn;
 
+        [Input("Normal Enable")]
+        protected IDiffSpread<bool> FNormalEnable;
+        [Input("Normal World Proj")]
+        protected IDiffSpread<Matrix4x4> FNormalProj;
+        [Input("Normal Buffer")]
+        protected IDiffSpread<DX11Resource<DX11Texture2D>> FNormalIn;
+        [Input("Normal Decode Bias")]
+        protected IDiffSpread<float> FNormalDecodeBiasIn;
+        [Input("Normal Decode Scale", DefaultValue = 1f)]
+        protected IDiffSpread<float> FNormalDecodeScaleIn;
+ 
+
         [Input("Enabled", DefaultBoolean = true)]
         protected IDiffSpread<bool> FEnabled;
-        // f those field names
 
         [Input("RenderMask", DefaultEnumEntry = "GFSDK_SSAO_RENDER_AO", Visibility = PinVisibility.OnlyInspector)]
         protected IDiffSpread<GfsdkHbaoRenderMask> FRendermaskIn;
@@ -186,6 +197,7 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
                 rthcp.Hbao.RenderTarget = rthcp.RenderTarget.RTV;
                 rthcp.Hbao.SetDepthSrv();
 
+
                 FOut[0][context] = rthcp.RenderTarget;
 
                 HbaoInstances.Add(context, rthcp);
@@ -197,12 +209,31 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
             hbao.DeviceContext = context.CurrentDeviceContext;
 
             var reschanged = w != rthcp.Width || h != rthcp.Height || aa != rthcp.SampleCount || reset;
-
+            if(FNormalEnable[0])
+            {
+                hbao.View = Array.ConvertAll(FNormalProj[0].Values, x => (float)x);
+                hbao.Normal = true;
+                hbao.NormalSrv = FNormalIn[0][context].SRV;
+                hbao.DecodeBias = FNormalDecodeBiasIn[0];
+                hbao.DecodeScale = FNormalDecodeScaleIn[0];
+                hbao.SetNormalsParameters();
+            }
+            else
+            {
+                hbao.Normal = false;
+                hbao.SetNormalsParameters();
+            }
             if (FProjIn.IsChanged || FSceneScaleIn.IsChanged || reschanged || isnew)
             {
 
                 hbao.Projection = Array.ConvertAll(FProjIn[0].Values, x => (float)x);
                 hbao.SceneScale = FSceneScaleIn[0];
+
+                if (FNormalEnable[0])
+                {
+
+                    FLogger.Log(LogType.Debug, "ayy we normal");
+                }
 
                 hbao.SetDepthParameters();
             }

@@ -99,6 +99,7 @@ namespace VVVV {
 				SlimDX::Direct3D11::DeviceContext^ DeviceContext;
 				SlimDX::Direct3D11::RenderTargetView^ RenderTarget;
 				SlimDX::Direct3D11::ShaderResourceView^ DepthSrv;
+				SlimDX::Direct3D11::ShaderResourceView^ NormalSrv;
 
 				array<float>^ Projection = gcnew array<float>(16);
 
@@ -125,12 +126,17 @@ namespace VVVV {
 				float BlurSharpnessProfileForegroundScale;
 				float BlurSharpnessProfileForegroundViewDepth;
 				float BlurSharpnessProfileBackgroundViewDepth;
+				bool Normal;
+				array<float>^ View = gcnew array<float>(16);
+				float DecodeBias;
+				float DecodeScale;
 
 				GfsdkHbaoContext(SlimDX::Direct3D11::Device^ device);
 				~GfsdkHbaoContext();
 
 				void SetDepthSrv();
 				void SetDepthParameters();
+				void SetNormalsParameters();
 				void SetAoParameters();
 				void SetRenderMask(GfsdkHbaoRenderMask mask);
 				void Render();

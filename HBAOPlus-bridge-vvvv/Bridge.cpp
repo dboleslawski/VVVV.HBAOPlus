@@ -44,12 +44,31 @@ void GfsdkHbaoContext::SetDepthParameters()
 		Unmanaged->input.DepthData.ProjectionMatrix.Layout = GFSDK_SSAO_ROW_MAJOR_ORDER;
 		Unmanaged->input.DepthData.MetersToViewSpaceUnits = SceneScale;
 		// TODO: implement this sometime
-		Unmanaged->input.NormalData.Enable = false;
+		//Unmanaged->input.NormalData.Enable = false;
 	}
 	finally
 	{
 		handle.Free();
 	}
+}
+
+void GfsdkHbaoContext::SetNormalsParameters()
+{
+	GCHandle handle = GCHandle::Alloc(View, GCHandleType::Pinned);
+	try
+	{
+		float* proj = (float*)(void*)handle.AddrOfPinnedObject();
+		Unmanaged->input.NormalData.Enable = Normal;
+		Unmanaged->input.NormalData.pFullResNormalTextureSRV = (ID3D11ShaderResourceView*)(void*)NormalSrv->ComPointer;
+		Unmanaged->input.NormalData.WorldToViewMatrix.Data = GFSDK_SSAO_Float4x4(proj);
+		Unmanaged->input.NormalData.DecodeBias = DecodeBias;
+		Unmanaged->input.NormalData.DecodeScale = DecodeScale;
+	}
+	finally
+	{
+		handle.Free();
+	}
+
 }
 
 void GfsdkHbaoContext::SetAoParameters()
