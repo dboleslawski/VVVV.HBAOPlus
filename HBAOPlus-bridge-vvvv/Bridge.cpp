@@ -61,6 +61,7 @@ void GfsdkHbaoContext::SetNormalsParameters()
 		Unmanaged->input.NormalData.Enable = Normal;
 		Unmanaged->input.NormalData.pFullResNormalTextureSRV = (ID3D11ShaderResourceView*)(void*)NormalSrv->ComPointer;
 		Unmanaged->input.NormalData.WorldToViewMatrix.Data = GFSDK_SSAO_Float4x4(proj);
+		Unmanaged->input.NormalData.WorldToViewMatrix.Layout = GFSDK_SSAO_ROW_MAJOR_ORDER;
 		Unmanaged->input.NormalData.DecodeBias = DecodeBias;
 		Unmanaged->input.NormalData.DecodeScale = DecodeScale;
 	}

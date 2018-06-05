@@ -223,6 +223,7 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
                 hbao.Normal = false;
                 hbao.SetNormalsParameters();
             }
+
             if (FProjIn.IsChanged || FSceneScaleIn.IsChanged || reschanged || isnew)
             {
 
@@ -231,12 +232,30 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
 
                 if (FNormalEnable[0])
                 {
-
-                    FLogger.Log(LogType.Debug, "ayy we normal");
+                    hbao.View = Array.ConvertAll(FNormalProj[0].Values, x => (float)x);
+                    hbao.Normal = true;
+                    hbao.NormalSrv = FNormalIn[0][context].SRV;
+                    hbao.DecodeBias = FNormalDecodeBiasIn[0];
+                    hbao.DecodeScale = FNormalDecodeScaleIn[0];
+                }
+                else
+                {
+                    hbao.Normal = false;
+                    hbao.SetNormalsParameters();
                 }
 
                 hbao.SetDepthParameters();
             }
+
+            if (FNormalDecodeBiasIn.IsChanged || FNormalDecodeScaleIn.IsChanged)
+            {
+                hbao.DecodeBias = FNormalDecodeBiasIn[0];
+                hbao.DecodeScale = FNormalDecodeScaleIn[0];
+            }
+
+            // prolly changing every frame anyways
+            hbao.View = Array.ConvertAll(FNormalProj[0].Values, x => (float)x);
+            hbao.SetNormalsParameters();
 
             if (FRadiusIn.IsChanged || FBiasIn.IsChanged || FPowerExpIn.IsChanged ||
                 FSmallScaleAoIn.IsChanged || FLargeScaleAoIn.IsChanged || FStepCountIn.IsChanged ||
@@ -297,6 +316,10 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
                 // make sure it doesn't try to run on the old depth buffer
                 rthcp.Hbao.DepthSrv = FDepthIn[0][context].SRV;
                 hbao.SetDepthSrv();
+
+                // also update normal buffer
+                hbao.NormalSrv = FNormalIn[0][context].SRV;
+                hbao.SetNormalsParameters();
 
                 reset = false;
             }
