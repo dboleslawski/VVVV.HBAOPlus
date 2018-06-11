@@ -136,7 +136,8 @@ namespace VVVV {
 
 				void SetDepthSrv();
 				void SetDepthParameters();
-				void SetNormalsParameters();
+				void SetNormalSrv();
+				void SetNormalParameters();
 				void SetAoParameters();
 				void SetRenderMask(GfsdkHbaoRenderMask mask);
 				void Render();

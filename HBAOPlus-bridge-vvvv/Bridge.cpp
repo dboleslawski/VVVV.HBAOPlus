@@ -10,8 +10,8 @@ GfsdkHbaoContext::GfsdkHbaoContext(SlimDX::Direct3D11::Device^ device)
 	Unmanaged = new GfsdkHbaoUnmanagedData();
 	Unmanaged->customHeap.new_ = ::operator new;
 	Unmanaged->customHeap.delete_ = ::operator delete;
-	Device = device;
-	Unmanaged->device = (ID3D11Device*)(void*)Device->ComPointer;
+	//Device = device;
+	Unmanaged->device = (ID3D11Device*)(void*)device->ComPointer;
 
 	Unmanaged->status = ManagedDLLImport::GFSDK_SSAO_CreateContext_D3D11(Unmanaged->device, &(Unmanaged->aoContext), &(Unmanaged->customHeap), GFSDK_SSAO_VERSION);
 
@@ -43,8 +43,6 @@ void GfsdkHbaoContext::SetDepthParameters()
 		Unmanaged->input.DepthData.ProjectionMatrix.Data = GFSDK_SSAO_Float4x4(proj);
 		Unmanaged->input.DepthData.ProjectionMatrix.Layout = GFSDK_SSAO_ROW_MAJOR_ORDER;
 		Unmanaged->input.DepthData.MetersToViewSpaceUnits = SceneScale;
-		// TODO: implement this sometime
-		//Unmanaged->input.NormalData.Enable = false;
 	}
 	finally
 	{
@@ -52,15 +50,19 @@ void GfsdkHbaoContext::SetDepthParameters()
 	}
 }
 
-void GfsdkHbaoContext::SetNormalsParameters()
+void GfsdkHbaoContext::SetNormalSrv()
+{
+	Unmanaged->input.NormalData.pFullResNormalTextureSRV = (ID3D11ShaderResourceView*)(void*)NormalSrv->ComPointer;
+}
+
+void GfsdkHbaoContext::SetNormalParameters()
 {
 	GCHandle handle = GCHandle::Alloc(View, GCHandleType::Pinned);
 	try
 	{
-		float* proj = (float*)(void*)handle.AddrOfPinnedObject();
+		float* view = (float*)(void*)handle.AddrOfPinnedObject();
 		Unmanaged->input.NormalData.Enable = Normal;
-		Unmanaged->input.NormalData.pFullResNormalTextureSRV = (ID3D11ShaderResourceView*)(void*)NormalSrv->ComPointer;
-		Unmanaged->input.NormalData.WorldToViewMatrix.Data = GFSDK_SSAO_Float4x4(proj);
+		Unmanaged->input.NormalData.WorldToViewMatrix.Data = GFSDK_SSAO_Float4x4(view);
 		Unmanaged->input.NormalData.WorldToViewMatrix.Layout = GFSDK_SSAO_ROW_MAJOR_ORDER;
 		Unmanaged->input.NormalData.DecodeBias = DecodeBias;
 		Unmanaged->input.NormalData.DecodeScale = DecodeScale;

@@ -26,7 +26,7 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
         public DX11RenderTarget2D RenderTarget;
         public int Width = -1;
         public int Height = -1;
-        public int SampleCount = 1;
+        public int SampleCount = -1;
     }
 
     [PluginInfo(Name = "HBAO+",
@@ -35,7 +35,7 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
                 Tags = "dx11, post processing",
                 Credits = "NVIDIA, NSYNK",
                 Author = "dennis, NSYNK")]
-    public class NVHBAOPlusNode : IPluginEvaluate, IDX11ResourceHost, IDX11Queryable, IPartImportsSatisfiedNotification, IDisposable
+    public class NVHBAOPlusNode : IPluginEvaluate, IDX11ResourceHost, IDX11Queryable, IDisposable
     {
 
         [Input("Depth Buffer")]
@@ -106,23 +106,23 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
         [Input("Blur Sharpness Profile Background View Depth", DefaultValue = 1f, Visibility = PinVisibility.OnlyInspector)]
         protected IDiffSpread<float> FBlurSharpnessProfileBackgroundViewDepthIn;
 
-        [Input("Normal Enable")]
-        protected IDiffSpread<bool> FNormalEnable;
-        [Input("Normal World Proj")]
-        protected IDiffSpread<Matrix4x4> FNormalProj;
-        [Input("Normal Buffer")]
+        [Input("Use Normal Buffer", Visibility = PinVisibility.OnlyInspector)]
+        protected IDiffSpread<bool> FNormal;
+        [Input("View", Visibility = PinVisibility.OnlyInspector)]
+        protected IDiffSpread<Matrix4x4> FView;
+        [Input("Normal Buffer", Visibility = PinVisibility.OnlyInspector)]
         protected IDiffSpread<DX11Resource<DX11Texture2D>> FNormalIn;
-        [Input("Normal Decode Bias")]
+        [Input("Normal Decode Bias", Visibility = PinVisibility.OnlyInspector)]
         protected IDiffSpread<float> FNormalDecodeBiasIn;
-        [Input("Normal Decode Scale", DefaultValue = 1f)]
+        [Input("Normal Decode Scale", DefaultValue = 1f, Visibility = PinVisibility.OnlyInspector)]
         protected IDiffSpread<float> FNormalDecodeScaleIn;
- 
+
+        [Input("RenderMask", DefaultEnumEntry = "GFSDK_SSAO_RENDER_AO", Visibility = PinVisibility.OnlyInspector)]
+        protected IDiffSpread<GfsdkHbaoRenderMask> FRendermaskIn;
 
         [Input("Enabled", DefaultBoolean = true)]
         protected IDiffSpread<bool> FEnabled;
 
-        [Input("RenderMask", DefaultEnumEntry = "GFSDK_SSAO_RENDER_AO", Visibility = PinVisibility.OnlyInspector)]
-        protected IDiffSpread<GfsdkHbaoRenderMask> FRendermaskIn;
 
         [Output("Output")]
         protected Pin<DX11Resource<DX11Texture2D>> FOut;
@@ -133,41 +133,24 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
         [Output("Query", IsSingle = true)]
         protected ISpread<IDX11Queryable> FQueryableOut;
 
-        [Import()]
-        public ILogger FLogger;
-
-        private Dictionary<DX11RenderContext, RenderTargetHbaoContextPair> HbaoInstances = new Dictionary<DX11RenderContext, RenderTargetHbaoContextPair>();
-
-        private bool init = false;
-        private bool reset = false;
-
-        private int w;
-        private int h;
-        private int aa;
-        private int lastW;
-        private int lastH;
-        private int lastAa;
-
-        public void OnImportsSatisfied()
-        {
-            FOut.Connected += OnConnected;
-        }
+        private List<Dictionary<DX11RenderContext, RenderTargetHbaoContextPair>> HbaoInstances = new List<Dictionary<DX11RenderContext, RenderTargetHbaoContextPair>>();
 
         public void Evaluate(int SpreadMax)
         {
             if (FDepthIn.SliceCount == 0 || !FOut.IsConnected)
                 return; // no need to run
 
-            if (FOut[0] == null)
-               FOut[0] = new DX11Resource<DX11Texture2D>();
+            for (int i = 0; i < FDepthIn.SliceCount; i++)
+            {
+                if (FOut[i] == null)
+                    FOut[i] = new DX11Resource<DX11Texture2D>();
+
+                FStatusOut[i] = "";
+                foreach (var rthcp in HbaoInstances[i].Values)
+                    FStatusOut[i] += rthcp.Hbao.PollStatus() + Environment.NewLine;
+            }
 
             FQueryableOut[0] = this;
-
-            FStatusOut[0] = "";
-            foreach (var rthcp in HbaoInstances.Values)
-            {
-                FStatusOut[0] += rthcp.Hbao.PollStatus() + Environment.NewLine;
-            }
         }
 
         public void Update(DX11RenderContext context)
@@ -176,88 +159,92 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
 
             BeginQuery?.Invoke(context);
 
-            w = FDepthIn[0][context].Width;
-            h = FDepthIn[0][context].Height;
-            aa = FDepthIn[0][context].Description.SampleDescription.Count;
-
-            RenderTargetHbaoContextPair rthcp;
-            var isnew = false;
-            if (!HbaoInstances.ContainsKey(context))
+            if (HbaoInstances.Count != FDepthIn.SliceCount)
             {
-                rthcp = new RenderTargetHbaoContextPair
+                // TODO: dispose stuff here too? there must be a better way
+                HbaoInstances.Clear();
+                for (int i = 0; i < FDepthIn.SliceCount; i++)
+                    HbaoInstances.Add(new Dictionary<DX11RenderContext, RenderTargetHbaoContextPair>());
+            }
+
+            for (int i = 0; i < FDepthIn.SliceCount; i++)
+            {
+                RenderTargetHbaoContextPair rthcp;
+                GfsdkHbaoContext hbao;
+
+                bool isNew = false;
+
+                int w = FDepthIn[0][context].Width;
+                int h = FDepthIn[0][context].Height;
+                int aa = FDepthIn[0][context].Description.SampleDescription.Count;
+
+                if (HbaoInstances.Count < i+1)
+                    HbaoInstances.Add(new Dictionary<DX11RenderContext, RenderTargetHbaoContextPair>());
+
+                if (!HbaoInstances[i].ContainsKey(context))
                 {
-                    //TODO: is the 8 bpc format a limitation of the HBAO+ SDK?
-                    RenderTarget = new DX11RenderTarget2D(context, w, h, new SampleDescription(1, 0), Format.R8G8B8A8_UNorm),
-                    Hbao = new GfsdkHbaoContext(context.Device),
-                    Width = w,
-                    Height = h,
-                    SampleCount = aa
-                };
-                rthcp.Hbao.DepthSrv = FDepthIn[0][context].SRV;
-                rthcp.Hbao.RenderTarget = rthcp.RenderTarget.RTV;
-                rthcp.Hbao.SetDepthSrv();
+                    rthcp = new RenderTargetHbaoContextPair
+                    {
+                        // TODO: is the 8 bpc format a limitation of the HBAO+ SDK?
+                        // TODO: changing format of the input texture seems to kill hbao+
+                        RenderTarget = new DX11RenderTarget2D(context, w, h, new SampleDescription(1, 0), Format.R8G8B8A8_UNorm),
+                        Hbao = new GfsdkHbaoContext(context.Device),
+                        Width = w,
+                        Height = h,
+                        SampleCount = aa
+                    };
+                    rthcp.Hbao.DepthSrv = FDepthIn[i][context].SRV;
+                    rthcp.Hbao.RenderTarget = rthcp.RenderTarget.RTV;
+                    rthcp.Hbao.SetDepthSrv();
 
+                    FOut[i][context] = rthcp.RenderTarget;
 
-                FOut[0][context] = rthcp.RenderTarget;
+                    HbaoInstances[i].Add(context, rthcp);
 
-                HbaoInstances.Add(context, rthcp);
-                isnew = true;
-            }
-            else rthcp = HbaoInstances[context];
-            var hbao = rthcp.Hbao;
-
-            hbao.DeviceContext = context.CurrentDeviceContext;
-
-            var reschanged = w != rthcp.Width || h != rthcp.Height || aa != rthcp.SampleCount || reset;
-            if(FNormalEnable[0])
-            {
-                hbao.View = Array.ConvertAll(FNormalProj[0].Values, x => (float)x);
-                hbao.Normal = true;
-                hbao.NormalSrv = FNormalIn[0][context].SRV;
-                hbao.DecodeBias = FNormalDecodeBiasIn[0];
-                hbao.DecodeScale = FNormalDecodeScaleIn[0];
-                hbao.SetNormalsParameters();
-            }
-            else
-            {
-                hbao.Normal = false;
-                hbao.SetNormalsParameters();
-            }
-
-            if (FProjIn.IsChanged || FSceneScaleIn.IsChanged || reschanged || isnew)
-            {
-
-                hbao.Projection = Array.ConvertAll(FProjIn[0].Values, x => (float)x);
-                hbao.SceneScale = FSceneScaleIn[0];
-
-                if (FNormalEnable[0])
-                {
-                    hbao.View = Array.ConvertAll(FNormalProj[0].Values, x => (float)x);
-                    hbao.Normal = true;
-                    hbao.NormalSrv = FNormalIn[0][context].SRV;
-                    hbao.DecodeBias = FNormalDecodeBiasIn[0];
-                    hbao.DecodeScale = FNormalDecodeScaleIn[0];
+                    isNew = true;
                 }
-                else
+                else rthcp = HbaoInstances[i][context];
+
+                hbao = rthcp.Hbao;
+                hbao.DeviceContext = context.CurrentDeviceContext;
+
+                bool resChanged = w != rthcp.Width || h != rthcp.Height || aa != rthcp.SampleCount; // TODO: do we need reset here?
+
+                // res change
+                if (resChanged)
                 {
-                    hbao.Normal = false;
-                    hbao.SetNormalsParameters();
+                    rthcp.Width = w;
+                    rthcp.Height = h;
+                    rthcp.SampleCount = aa;
+
+                    rthcp.RenderTarget.Dispose();
+                    rthcp.RenderTarget = new DX11RenderTarget2D(context, w, h, new SampleDescription(1, 0), Format.R8G8B8A8_UNorm);
+
+                    FOut[i][context] = rthcp.RenderTarget;
+                    hbao.RenderTarget = rthcp.RenderTarget.RTV;
+
+                    // make sure it doesn't try to run on the old depth buffer
+                    rthcp.Hbao.DepthSrv = FDepthIn[i][context].SRV;
+                    hbao.SetDepthSrv();
+
+                    if (FNormalIn[i] != null)
+                    {
+                        hbao.NormalSrv = FNormalIn[i][context].SRV;
+                        hbao.SetNormalSrv();
+                    }
                 }
 
-                hbao.SetDepthParameters();
-            }
+                // depth parameters
+                if (FProjIn.IsChanged || FSceneScaleIn.IsChanged || resChanged || isNew)
+                {
+                    hbao.Projection = Array.ConvertAll(FProjIn[i].Values, x => (float)x);
+                    hbao.SceneScale = FSceneScaleIn[i];
 
-            if (FNormalDecodeBiasIn.IsChanged || FNormalDecodeScaleIn.IsChanged)
-            {
-                hbao.DecodeBias = FNormalDecodeBiasIn[0];
-                hbao.DecodeScale = FNormalDecodeScaleIn[0];
-            }
+                    hbao.SetDepthParameters();
+                }
 
-            // prolly changing every frame anyways
-            hbao.View = Array.ConvertAll(FNormalProj[0].Values, x => (float)x);
-            hbao.SetNormalsParameters();
-
-            if (FRadiusIn.IsChanged || FBiasIn.IsChanged || FPowerExpIn.IsChanged ||
+                // ao parameters
+                if (FRadiusIn.IsChanged || FBiasIn.IsChanged || FPowerExpIn.IsChanged ||
                 FSmallScaleAoIn.IsChanged || FLargeScaleAoIn.IsChanged || FStepCountIn.IsChanged ||
                 FForegroundAoIn.IsChanged || FForegroundViewDepthIn.IsChanged ||
                 FBackgroundAoIn.IsChanged || FBackgroundViewDepthIn.IsChanged ||
@@ -268,83 +255,75 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
                 FBlurSharpnessProfileForegroundScaleIn.IsChanged ||
                 FBlurSharpnessProfileForegroundViewDepthIn.IsChanged ||
                 FBlurSharpnessProfileBackgroundViewDepthIn.IsChanged ||
-                reschanged || isnew
-            )
-            {
-                hbao.Radius = FRadiusIn[0];
-                hbao.Bias = FBiasIn[0];
-                hbao.PowerExp = FPowerExpIn[0];
-                hbao.SmallScaleAo = FSmallScaleAoIn[0];
-                hbao.LargeScaleAo = FLargeScaleAoIn[0];
-                hbao.StepCount = FStepCountIn[0];
-                hbao.ForegroundAo = FForegroundAoIn[0];
-                hbao.ForegroundViewDepth = FForegroundViewDepthIn[0];
-                hbao.BackgroundAo = FBackgroundAoIn[0];
-                hbao.BackgroundViewDepth = FBackgroundViewDepthIn[0];
-                hbao.DepthStorage = FDepthStorageIn[0];
-                hbao.DepthClampMode = FDepthClampModeIn[0];
-                hbao.DepthThreshold = FDepthThresholdIn[0];
-                hbao.DepthThresholdMaxViewDepth = FDepthThresholdMaxViewDepthIn[0];
-                hbao.DepthThresholdSharpness = FDepthThresholdSharpnessIn[0];
-                hbao.Blur = FBlurIn[0];
-                hbao.BlurRadius = FBlurRadiusIn[0];
-                hbao.BlurSharpness = FBlurSharpnessIn[0];
-                hbao.BlurSharpnessProfile = FBlurSharpnessProfileIn[0];
-                hbao.BlurSharpnessProfileForegroundScale = FBlurSharpnessProfileForegroundScaleIn[0];
-                hbao.BlurSharpnessProfileForegroundViewDepth = FBlurSharpnessProfileForegroundViewDepthIn[0];
-                hbao.BlurSharpnessProfileBackgroundViewDepth = FBlurSharpnessProfileBackgroundViewDepthIn[0];
+                resChanged || isNew)
+                {
+                    hbao.Radius = FRadiusIn[i];
+                    hbao.Bias = FBiasIn[i];
+                    hbao.PowerExp = FPowerExpIn[i];
+                    hbao.SmallScaleAo = FSmallScaleAoIn[i];
+                    hbao.LargeScaleAo = FLargeScaleAoIn[i];
+                    hbao.StepCount = FStepCountIn[i];
+                    hbao.ForegroundAo = FForegroundAoIn[i];
+                    hbao.ForegroundViewDepth = FForegroundViewDepthIn[i];
+                    hbao.BackgroundAo = FBackgroundAoIn[i];
+                    hbao.BackgroundViewDepth = FBackgroundViewDepthIn[i];
+                    hbao.DepthStorage = FDepthStorageIn[i];
+                    hbao.DepthClampMode = FDepthClampModeIn[i];
+                    hbao.DepthThreshold = FDepthThresholdIn[i];
+                    hbao.DepthThresholdMaxViewDepth = FDepthThresholdMaxViewDepthIn[i];
+                    hbao.DepthThresholdSharpness = FDepthThresholdSharpnessIn[i];
+                    hbao.Blur = FBlurIn[i];
+                    hbao.BlurRadius = FBlurRadiusIn[i];
+                    hbao.BlurSharpness = FBlurSharpnessIn[i];
+                    hbao.BlurSharpnessProfile = FBlurSharpnessProfileIn[i];
+                    hbao.BlurSharpnessProfileForegroundScale = FBlurSharpnessProfileForegroundScaleIn[i];
+                    hbao.BlurSharpnessProfileForegroundViewDepth = FBlurSharpnessProfileForegroundViewDepthIn[i];
+                    hbao.BlurSharpnessProfileBackgroundViewDepth = FBlurSharpnessProfileBackgroundViewDepthIn[i];
 
-                hbao.SetAoParameters();
+                    hbao.SetAoParameters();
+                }
+
+                // normal srv
+                if (FNormalIn[i] != null)
+                {
+                    hbao.NormalSrv = FNormalIn[i][context].SRV;
+                    hbao.SetNormalSrv();
+                }
+
+                // normal parameters
+                if (FNormal.IsChanged || FNormalDecodeBiasIn.IsChanged || FNormalDecodeScaleIn.IsChanged || isNew)
+                {
+                    hbao.Normal = FNormal[i];
+                    hbao.View = Array.ConvertAll(FView[i].Values, x => (float)x);
+                    hbao.DecodeBias = FNormalDecodeBiasIn[i];
+                    hbao.DecodeScale = FNormalDecodeScaleIn[i];
+                    hbao.SetNormalParameters();
+                }
+
+                // rendermask
+                if (FRendermaskIn.IsChanged || isNew)
+                    hbao.SetRenderMask(FRendermaskIn[0]);
+
+                hbao.Render();
             }
-
-            if (FRendermaskIn.IsChanged || reschanged || isnew)
-                hbao.SetRenderMask(FRendermaskIn[0]);
-
-            if (reschanged)
-            {
-                rthcp.Width = w;
-                rthcp.Height = h;
-                rthcp.SampleCount = aa;
-
-                rthcp.RenderTarget.Dispose();
-                rthcp.RenderTarget = new DX11RenderTarget2D(context, w, h, new SampleDescription(1, 0), Format.R8G8B8A8_UNorm);
-
-                FOut[0][context] = rthcp.RenderTarget;
-
-                hbao.RenderTarget = rthcp.RenderTarget.RTV;
-
-                // make sure it doesn't try to run on the old depth buffer
-                rthcp.Hbao.DepthSrv = FDepthIn[0][context].SRV;
-                hbao.SetDepthSrv();
-
-                // also update normal buffer
-                hbao.NormalSrv = FNormalIn[0][context].SRV;
-                hbao.SetNormalsParameters();
-
-                reset = false;
-            }
-
-
-            hbao.Render();
 
             EndQuery?.Invoke(context);
         }
 
         public void Destroy(DX11RenderContext context, bool force)
         {
-            if (HbaoInstances.ContainsKey(context))
+            for (int i = 0; i < FOut.SliceCount; i++)
             {
-                var rthcp = HbaoInstances[context];
-                rthcp.RenderTarget.Dispose();
-                rthcp.Hbao.Dispose();
-                HbaoInstances.Remove(context);
+                if (HbaoInstances[i].ContainsKey(context))
+                {
+                    var rthcp = HbaoInstances[i][context];
+                    rthcp.RenderTarget.Dispose();
+                    rthcp.Hbao.Dispose();
+                    HbaoInstances[i].Remove(context);
+                }
+                HbaoInstances.Clear();
+                FOut[i][context].Dispose();
             }
-            FOut[0][context].Dispose();
-        }
-
-        private void OnConnected(object sender, PinConnectionEventArgs args)
-        {
-            reset = true;
         }
 
         ~NVHBAOPlusNode()
@@ -357,13 +336,18 @@ namespace VVVV.Nodes.DX11.NVHBAOPlus
         
         private void Dispose(bool disposing)
         {
-            foreach (var rthcp in HbaoInstances.Values)
+            for (int i = 0; i < FOut.SliceCount; i++)
             {
-                rthcp.Hbao.Dispose();
-                rthcp.RenderTarget.Dispose();
+                foreach (var rthcp in HbaoInstances[i].Values)
+                {
+                    rthcp.Hbao.Dispose();
+                    rthcp.RenderTarget.Dispose();
+                }
+                HbaoInstances[i].Clear();
+                FOut[i]?.Dispose();
             }
-            HbaoInstances.Clear();
-            FOut[0]?.Dispose();
+            //HbaoInstances.Flush();
+            FOut.SafeDisposeAll();
         }
 
         public void Dispose()
